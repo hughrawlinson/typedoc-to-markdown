@@ -1,30 +1,44 @@
 import { join } from "path";
+import { ProjectReflection } from "typedoc";
+import { ModelToObject } from "typedoc/dist/lib/serialization/schema";
 
-const spec: TsDocSchema = require(join(__dirname, "../fixtures/out.json"));
+type TsDocSchema = ModelToObject<ProjectReflection>;
+const spec: TsDocSchema = require(join(
+  __dirname,
+  // "../fixtures/streamr-client-javascript.json"
+  "../fixtures/typedoc.json"
+));
 
-type TsDocSchema = {
-  children: [
-    {
-      id: number;
-      name: string;
-      kindString: string;
-      comment?: {
-        shortText: string;
-      };
-      children?: Child[];
-    }
-  ];
-  groups: [
-    {
-      title: string;
-      children: number[];
-    }
-  ];
-};
+// type TsDocSchema = {
+//   children: [
+//     {
+//       id: number;
+//       name: string;
+//       kindString: string;
+//       comment?: {
+//         shortText: string;
+//         text?: string;
+//       };
+//       children?: Child[];
+//     }
+//   ];
+//   groups: [
+//     {
+//       title: string;
+//       children: number[];
+//     }
+//   ];
+// };
 
-type Child = TsDocSchema["children"][number];
+type Child = NonNullable<TsDocSchema["children"]>[number];
 
-type Group = TsDocSchema["groups"][number];
+type Group = NonNullable<TsDocSchema["groups"]>[number];
+
+type TypedocType = Child["type"];
+
+function headingForDepth(n: number) {
+  return "#".repeat(n);
+}
 
 function renderGroup(group: Group): [string, string] {
   return [
@@ -32,10 +46,10 @@ function renderGroup(group: Group): [string, string] {
     `# ${group.title || "fish"}
 
 ${group.children
-  .map((id) => {
+  ?.map((id) => {
     const reflection = findById(id);
     if (reflection) {
-      return renderReflection(reflection);
+      return renderReflection(reflection, { depth: 1 });
     }
   })
   .join("\n")}`,
@@ -43,11 +57,13 @@ ${group.children
 }
 
 function findById(id: number): Child | undefined {
-  return spec.children.find((child) => child.id === id);
+  return spec.children?.find((child) => child.id === id);
 }
 
-function defaultSerialization(reflection: Child): string {
-  return `# ${reflection.name || `No name for object ${reflection}`}
+function defaultSerialization(reflection: Child, options: Options): string {
+  return `${headingForDepth(options.depth)} ${
+    reflection.name || `No name for object ${reflection}`
+  }
 
 _${reflection.kindString}_
 
@@ -55,7 +71,7 @@ ${reflection.comment?.shortText || "No description"}
   
 ${
   reflection?.children
-    ?.map((child) => renderReflection(child))
+    ?.map((child) => renderReflection(child, options))
     .filter(Boolean)
     .join("\n") || ""
 }`;
@@ -68,12 +84,16 @@ function childrenAreAllProperties(children: Child[]): boolean {
   );
 }
 
-function interfaceSerialization(reflection: Child): string {
-  return `### ${reflection.name || `No name for object ${reflection}`}
+function interfaceSerialization(reflection: Child, options: Options): string {
+  return `${headingForDepth(options.depth)} ${
+    reflection.name || `No name for object ${reflection}`
+  }
 
 _${reflection.kindString}_
 
-${reflection.comment?.shortText || "No description"}
+${reflection.comment?.shortText || ""}
+
+${reflection.comment?.text || ""}
 
 ${
   reflection.children && childrenAreAllProperties(reflection.children)
@@ -82,14 +102,14 @@ ${
 <tbody>
 ${
   reflection?.children
-    ?.map((child) => renderReflection(child))
+    ?.map((child) => renderReflection(child, { ...options, asTableRow: true }))
     .filter(Boolean)
     .join("\n") || ""
 }
 </tbody>
 </table>`
     : reflection?.children
-        ?.map((child) => renderReflection(child))
+        ?.map((child) => renderReflection(child, options))
         .filter(Boolean)
         .join("\n") || ""
 }
@@ -97,14 +117,49 @@ ${
 `;
 }
 
-function propertySerialization(reflection: Child): string {
-  return `<tr><td>${
+type Options = {
+  depth: number;
+  asTableRow?: boolean;
+};
+
+function propertySerialization(reflection: Child, options: Options): string {
+  if (options?.asTableRow) {
+    return `<tr><td>${
+      reflection.name || `No name for object ${reflection}`
+    }*</td><td>${reflection.comment?.shortText || "No description"}</td></tr>`;
+  }
+
+  return `${headingForDepth(options.depth)} ${
     reflection.name || `No name for object ${reflection}`
-  }*</td><td>${reflection.comment?.shortText || "No description"}</td></tr>`;
+  }`;
 }
 
-function classSerialization(reflection: Child): string {
-  return `## ${reflection.name || `No name for object ${reflection}`}
+function classSerialization(reflection: Child, options: Options): string {
+  return `${headingForDepth(options.depth)} ${
+    reflection.name || `No name for object ${reflection}`
+  }
+
+<details>
+
+<summary>${reflection.kindString}</summary>
+
+${reflection.comment?.shortText || "No description"}
+
+${
+  reflection.children
+    ?.map((child) => renderReflection(child, options))
+    .filter(Boolean)
+    .join("\n") || ""
+}
+
+</details>
+`;
+}
+
+function methodSerialization(reflection: Child, options: Options): string {
+  return `${headingForDepth(options.depth)} ${
+    reflection.name || `No name for object ${reflection}`
+  }
 
 _${reflection.kindString}_
 
@@ -112,38 +167,30 @@ ${reflection.comment?.shortText || "No description"}
 
 ${
   reflection.children
-    ?.map((child) => renderReflection(child))
+    ?.map((child) => renderReflection(child, options))
     .filter(Boolean)
     .join("\n") || ""
 }`;
 }
 
-function methodSerialization(reflection: Child): string {
-  return `### ${reflection.name || `No name for object ${reflection}`}
-
-_${reflection.kindString}_
-
-${reflection.comment?.shortText || "No description"}
-
-${
-  reflection.children
-    ?.map((child) => renderReflection(child))
-    .filter(Boolean)
-    .join("\n") || ""
-}`;
-}
-function renderReflection(reflection: Child): string {
+function renderReflection(reflection: Child, _options: Options): string {
+  const options = {
+    ..._options,
+    depth: _options.depth + 1,
+  };
   switch (reflection.kindString) {
     case "Method":
-      return methodSerialization(reflection);
+      return methodSerialization(reflection, options);
+    case "Constructor":
+      return methodSerialization(reflection, options);
     case "Class":
-      return classSerialization(reflection);
+      return classSerialization(reflection, options);
     case "Property":
-      return propertySerialization(reflection);
+      return propertySerialization(reflection, options);
     case "Interface":
-      return interfaceSerialization(reflection);
+      return interfaceSerialization(reflection, options);
     default:
-      return defaultSerialization(reflection);
+      return defaultSerialization(reflection, options);
   }
 }
 
@@ -153,4 +200,4 @@ const result = spec.groups?.map((group) => {
 });
 
 // console.log(JSON.stringify(result, null, 2));
-console.log(result[0].serialization);
+console.log(result?.[0].serialization);
